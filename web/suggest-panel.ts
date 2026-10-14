@@ -63,10 +63,10 @@ export function mountSuggestPanel(root: HTMLElement, host: SuggestHost): { refre
       const summaries = await fetchWikiSummaries(list.filter((s) => s.wikipedia && !wiki.has(s.wikipedia))).catch(() => new Map());
       for (const [t, w] of summaries) wiki.set(t, w);
       if (my === seq) render();
-    } catch {
+    } catch (e) {
       if (my !== seq) return;
       loading = false;
-      error = "観光地を探せませんでした。少し待ってからもう一度試してください";
+      error = `観光地を探せませんでした。少し待ってからもう一度試してください（${e instanceof Error ? e.message : String(e)}）`;
       render();
     }
   }
@@ -118,11 +118,11 @@ export function mountSuggestPanel(root: HTMLElement, host: SuggestHost): { refre
           .map((c) => `<button type="button" class="chip" data-cat="${c}" aria-pressed="${cats.has(c)}">${CATEGORY_LABEL[c]}</button>`)
           .join("")}</div>` : ""}
         ${loading ? `<p class="muted">観光地を探しています…</p>` : ""}
-        ${error ? `<p class="warn">${esc(error)}</p>` : ""}
+        ${error ? `<p class="warn">${esc(error)}</p><button type="button" class="btn more" data-act="retry">もう一度探す</button>` : ""}
         ${!loading && !error && all.length === 0 ? `<p class="muted">この範囲では見つかりませんでした。範囲を広げてみてください</p>` : ""}
         <ul class="sg-list">${items}</ul>
         ${list.length > shown ? `<button type="button" class="btn more" data-act="more">もっと見る（あと${list.length - shown}件）</button>` : ""}
-        ${all.length ? `<p class="note">データ：OpenStreetMap・Wikipedia。営業時間は分かるものだけ入れています。</p>` : ""}
+        ${all.length ? `<p class="note">データ：Wikidata・OpenStreetMap・Wikipedia。営業時間は分かるものだけ入れています。</p>` : ""}
       </div>`;
     currentList = list;
   }
@@ -140,6 +140,10 @@ export function mountSuggestPanel(root: HTMLElement, host: SuggestHost): { refre
     if (act === "close") {
       open = false;
       render();
+      return;
+    }
+    if (act === "retry") {
+      void load();
       return;
     }
     if (act === "more") {

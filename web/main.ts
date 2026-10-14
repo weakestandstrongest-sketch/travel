@@ -10,7 +10,7 @@ import { MODE_LABEL, toMarkdown, weekday } from "../src/export/markdown.js";
 import { NorikaeProvider, norikaeAppUrl, stationName } from "../src/providers/norikae.js";
 import { CATEGORY_LABEL, type Suggestion } from "../src/providers/suggest.js";
 import { TripMap, dayColor } from "./map.js";
-import { searchPlaces, type PlaceCandidate } from "./places.js";
+import { findStation, searchPlaces, type PlaceCandidate } from "./places.js";
 import { mountSuggestPanel } from "./suggest-panel.js";
 
 /* ---------- 状態 ---------- */
@@ -131,13 +131,24 @@ async function locateStation(): Promise<void> {
   const b = state.base;
   if (!b?.station) return;
   const st = stationName(b.station);
-  const hits = await searchPlaces(`${st}駅`);
+  let hit: { lat: number; lng: number } | null = null;
+  let failed = false;
+  try {
+    hit = await findStation(st, b);
+  } catch {
+    failed = true;
+  }
   if (state.base !== b || b.station === undefined || stationName(b.station) !== st) return; // 途中で変わった
-  const hit = hits.find((h) => h.name.includes(st)) ?? null;
   b.stationLat = hit?.lat;
   b.stationLng = hit?.lng;
   const note = document.querySelector("#stationNote");
-  if (note) note.textContent = hit ? `${st}駅 を起点にして、おすすめと移動時間を考えます` : `${st}駅 の場所が見つかりませんでした（乗換案内には使います）`;
+  if (note) {
+    note.textContent = hit
+      ? `${st}駅 を起点にして、おすすめと移動時間を考えます`
+      : failed
+        ? `${st}駅 の場所を調べられませんでした（通信を確認してください）。宿の位置を起点にします`
+        : `${st}駅 の場所が見つかりませんでした。宿の位置を起点にします（乗換案内には ${st} で使います）`;
+  }
   save();
   suggest.refresh();
   if (!itinerary) map.showPlaces(origin(), state.spots);

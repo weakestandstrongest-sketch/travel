@@ -68,3 +68,42 @@ function dedupe(list: PlaceCandidate[]): PlaceCandidate[] {
     return Number.isFinite(c.lat) && Number.isFinite(c.lng);
   });
 }
+
+/**
+ * 駅の位置を探す。OpenStreetMap では駅は「茨木」のように「駅」なしで登録されているので、
+ * 鉄道の駅だけに絞って駅名で探す。同じ名前の駅が複数あれば near に一番近いものにする。
+ */
+export async function findStation(name: string, near?: LatLng): Promise<LatLng | null> {
+  const queries: Array<Record<string, string>> = [
+    { q: name, layer: "railway" },
+    { q: `${name}駅` },
+    { q: `${name} station` },
+  ];
+  const found: LatLng[] = [];
+  let failures = 0;
+  for (const extra of queries) {
+    const params = new URLSearchParams({ format: "jsonv2", limit: "10", countrycodes: "jp", "accept-language": "ja", ...extra });
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const hits = (await res.json()) as Array<{ lat: string; lon: string; name?: string; category?: string; type?: string }>;
+      for (const h of hits) {
+        const isStation =
+          (h.category === "railway" && /^(station|halt|stop)$/.test(h.type ?? "")) ||
+          (h.category === "public_transport" && h.type === "station");
+        const n = (h.name ?? "").replace(/駅$/, "");
+        if (isStation && (n === name || n.startsWith(name))) found.push({ lat: Number(h.lat), lng: Number(h.lon) });
+      }
+    } catch {
+      failures++;
+    }
+    if (found.length) break;
+  }
+  if (!found.length) {
+    if (failures === queries.length) throw new Error("駅を調べられませんでした（通信を確認してください）");
+    return null;
+  }
+  if (!near) return found[0]!;
+  const d = (p: LatLng) => (p.lat - near.lat) ** 2 + (p.lng - near.lng) ** 2;
+  return found.reduce((a, b) => (d(b) < d(a) ? b : a));
+}
