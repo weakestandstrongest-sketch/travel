@@ -100,6 +100,17 @@ describe("NorikaeProvider", () => {
     expect(await new NorikaeProvider("https://x.workers.dev", fakeFetch).route(kyoto.base, kyoto.base, "2026-11-21", "09:00")).toBeNull();
   });
 
+  it("駅名は「駅」をつけずに検索する", async () => {
+    let requested = "";
+    const fakeFetch = (async (url: string) => {
+      requested = url;
+      return new Response(JSON.stringify({ routes: [] }));
+    }) as unknown as typeof fetch;
+    const from = { name: "茨木", station: "茨木駅", lat: 34.8, lng: 135.5 };
+    await new NorikaeProvider("https://x.workers.dev", fakeFetch).route(from, kyoto.base, "2026-11-21", "09:00");
+    expect(new URL(requested).searchParams.get("from")).toBe("茨木");
+  });
+
   it("のりかえの画面を開くリンク", () => {
     const url = new URL(norikaeAppUrl("https://x.workers.dev", kyoto.base, kyoto.spots[1]!, "2026-11-21", "10:50"));
     expect(url.searchParams.get("to")).toBe("清水五条");

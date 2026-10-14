@@ -17,10 +17,11 @@ export interface SuggestHost {
   toggle(s: Suggestion): boolean;
 }
 
-const RANGES: Array<{ km: number; label: string }> = [
-  { km: 2, label: "歩いて行ける" },
-  { km: 10, label: "近場" },
-  { km: 30, label: "遠出も" },
+const RANGES: Array<{ km: number; label: string; note: string }> = [
+  { km: 2, label: "徒歩圏", note: "2km" },
+  { km: 10, label: "近場", note: "10km" },
+  { km: 30, label: "遠出", note: "30km" },
+  { km: 50, label: "電車で1時間", note: "50km" },
 ];
 const DEFAULT_RANGE: Record<TravelMode, number> = { walk: 2, transit: 10, car: 30 };
 const PAGE = 12;
@@ -111,7 +112,7 @@ export function mountSuggestPanel(root: HTMLElement, host: SuggestHost): { refre
           <button type="button" class="link" data-act="close">閉じる</button>
         </div>
         <div class="seg sg-range" role="radiogroup">${RANGES.map(
-          (r) => `<button type="button" role="radio" data-km="${r.km}" aria-checked="${r.km === km}">${r.label}<small>${r.km}km</small></button>`,
+          (r) => `<button type="button" role="radio" data-km="${r.km}" aria-checked="${r.km === km}">${r.label}<small>${r.note}</small></button>`,
         ).join("")}</div>
         ${present.length > 1 ? `<div class="chips">${present
           .map((c) => `<button type="button" class="chip" data-cat="${c}" aria-pressed="${cats.has(c)}">${CATEGORY_LABEL[c]}</button>`)

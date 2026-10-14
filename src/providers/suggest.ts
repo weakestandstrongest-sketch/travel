@@ -52,14 +52,17 @@ export interface OverpassElement {
 export function buildOverpassQuery(center: LatLng, radiusKm: number): string {
   const r = Math.round(radiusKm * 1000);
   const around = `(around:${r},${center.lat},${center.lng})`;
-  const famous = radiusKm > 3 ? `["wikidata"]` : "";
+  // 電車で1時間ほどの広い範囲では、英語名もある Wikipedia の記事つき（＝よく知られた）場所だけにする
+  const wide = `["wikipedia"]["name:en"]`;
+  const famous = radiusKm > 25 ? wide : radiusKm > 3 ? `["wikidata"]` : "";
+  const known = radiusKm > 25 ? wide : `["wikidata"]`;
   return `[out:json][timeout:25];
 (
   nwr["tourism"~"^(attraction|museum|gallery|viewpoint|zoo|aquarium|theme_park)$"]["name"]${famous}${around};
   nwr["historic"~"^(castle|monument|memorial|ruins|archaeological_site|city_gate|temple|shrine)$"]["name"]${famous}${around};
-  nwr["amenity"="place_of_worship"]["name"]["wikidata"]${around};
-  nwr["leisure"~"^(park|garden|nature_reserve)$"]["name"]["wikidata"]${around};
-  nwr["natural"~"^(peak|waterfall|beach|hot_spring)$"]["name"]["wikidata"]${around};
+  nwr["amenity"="place_of_worship"]["name"]${known}${around};
+  nwr["leisure"~"^(park|garden|nature_reserve)$"]["name"]${known}${around};
+  nwr["natural"~"^(peak|waterfall|beach|hot_spring)$"]["name"]${known}${around};
 );
 out center tags 400;`;
 }

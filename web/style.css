@@ -151,7 +151,7 @@ small {
 }
 .grid2 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0 10px;
 }
 .grid2 > .field:nth-child(-n + 2) {
@@ -166,6 +166,19 @@ select {
   border-radius: 10px;
   padding: 8px 10px;
   min-height: 40px;
+}
+/* iPhone の Safari は日付・時刻の入力欄に独自の最小幅をつけて枠からはみ出すので、見た目をそろえる */
+input[type="date"],
+input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  text-align: left;
+  line-height: 22px;
+}
+input::-webkit-date-and-time-value {
+  text-align: left;
+  margin: 0;
 }
 input:focus-visible,
 select:focus-visible,
@@ -586,33 +599,89 @@ summary:focus-visible {
   text-decoration: none;
   font-size: 12px;
 }
-.route summary {
-  cursor: pointer;
+.rt {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.rt > li {
+  display: grid;
+  grid-template-columns: 50px 14px 1fr;
+  gap: 6px;
+  align-items: start;
+}
+.rt-t {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
+  line-height: 1.4;
   color: var(--ink-2);
 }
-.route ol {
-  list-style: none;
-  padding: 4px 0 0;
-  margin: 0;
+.rt-t span,
+.rt-t b {
+  display: block;
 }
-.route .st {
+.rt-t b {
   color: var(--ink);
 }
-.route .st .num {
-  display: inline-block;
-  width: 44px;
-  font-variant-numeric: tabular-nums;
+.rt-dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border-radius: 50%;
+  border: 3px solid var(--ink-2);
+  background: var(--surface);
+}
+.rt-nm {
+  color: var(--ink);
+  font-size: 14px;
+}
+.rt-bar {
+  justify-self: center;
+  width: 4px;
+  min-height: 34px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--lc, var(--ink-3));
+}
+.rt-ac.walk .rt-bar {
+  background: none;
+  border-left: 3px dotted var(--ink-3);
+  width: 0;
+}
+.rt-ac > div {
+  padding: 4px 0 6px;
+  min-width: 0;
+}
+.rt-ln {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  display: block;
+}
+.rt-ac small {
+  display: block;
   color: var(--ink-2);
 }
-.route .ac {
-  margin-left: 18px;
-  padding: 2px 0 2px 24px;
-  border-left: 4px solid var(--lc, var(--ink-3));
+.rt-stops summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 700;
+}
+.rt-stops ul {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
   font-size: 12px;
 }
-.route .ac.walk {
-  border-left-style: dotted;
+.rt-stops li {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 8px;
+}
+.rt-stops .rt-t {
+  text-align: left;
 }
 
 .unscheduled h3 {
@@ -688,8 +757,12 @@ summary:focus-visible {
   gap: 8px;
   margin-bottom: 8px;
 }
+.sg-range {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
 .sg-range button {
   display: grid;
+  font-size: 13px;
   line-height: 1.25;
   padding: 4px 0;
 }

@@ -20,6 +20,9 @@ export interface StraightLineOptions {
   /** この距離（実距離 km）以下は transit 指定でも徒歩にする */
   walkThresholdKm: number;
   transitKmh: number;
+  /** これより遠い分は快速・特急など速い電車で行ける想定にする（km） */
+  transitFastAfterKm: number;
+  transitFastKmh: number;
   /** 駅までの徒歩・待ち時間など、電車・バス利用時の固定ロス（分） */
   transitOverheadMin: number;
   carKmh: number;
@@ -32,6 +35,8 @@ const DEFAULTS: StraightLineOptions = {
   walkKmh: 4.5,
   walkThresholdKm: 1.2,
   transitKmh: 25,
+  transitFastAfterKm: 10,
+  transitFastKmh: 55,
   transitOverheadMin: 12,
   carKmh: 25,
   carOverheadMin: 8,
@@ -57,7 +62,9 @@ export class StraightLineEstimator implements TravelTimeEstimator {
       const minutes = o.carOverheadMin + (distanceKm / o.carKmh) * 60;
       return { minutes: Math.ceil(minutes), distanceKm, mode: "car" };
     }
-    const transitMinutes = o.transitOverheadMin + (distanceKm / o.transitKmh) * 60;
+    const near = Math.min(distanceKm, o.transitFastAfterKm);
+    const far = distanceKm - near;
+    const transitMinutes = o.transitOverheadMin + (near / o.transitKmh + far / o.transitFastKmh) * 60;
     // 電車を待つより歩いた方が早い距離なら歩く
     if (walkMinutes <= transitMinutes) {
       return { minutes: Math.ceil(walkMinutes), distanceKm, mode: "walk" };

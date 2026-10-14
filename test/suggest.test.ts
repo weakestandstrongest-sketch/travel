@@ -44,6 +44,9 @@ describe("buildOverpassQuery", () => {
   it("広い範囲では有名な場所（wikidata あり）に絞る", () => {
     expect(buildOverpassQuery(kyotoSt, 2)).toContain('nwr["tourism"~"^(attraction|museum|gallery|viewpoint|zoo|aquarium|theme_park)$"]["name"](around:2000,');
     expect(buildOverpassQuery(kyotoSt, 10)).toContain('["name"]["wikidata"](around:10000,');
+    const wide = buildOverpassQuery(kyotoSt, 50);
+    expect(wide).toContain('nwr["amenity"="place_of_worship"]["name"]["wikipedia"]["name:en"](around:50000,');
+    expect(wide).not.toContain('["name"]["wikidata"]');
   });
 });
 

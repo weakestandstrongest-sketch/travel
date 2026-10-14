@@ -2,7 +2,10 @@ import type { TransitProvider } from "../core/transit.js";
 import type { Place, TransitRoute } from "../core/types.js";
 
 /** 乗換案内で検索するときの地点名（駅名があれば駅名） */
-export const transitName = (p: Place): string => p.station ?? p.name;
+export const transitName = (p: Place): string => (p.station ? stationName(p.station) : p.name);
+
+/** 「茨木駅」→「茨木」（乗換案内は駅名を「駅」なしで受け付ける） */
+export const stationName = (s: string): string => s.trim().replace(/駅$/, "") || s.trim();
 
 /**
  * 自作の乗換案内「のりかえ」（Cloudflare Worker）の /api/search を使う。

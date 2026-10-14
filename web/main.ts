@@ -6,8 +6,8 @@ import { refineWithTransit } from "../src/core/transit.js";
 import type { Itinerary, Move, Place, Spot, TravelMode, TripRequest, Visit } from "../src/core/types.js";
 import { toIcs } from "../src/export/ics.js";
 import { googleMapsDirectionsUrl, yahooTransitUrl } from "../src/export/links.js";
-import { MODE_LABEL, toMarkdown, transitLines, weekday } from "../src/export/markdown.js";
-import { NorikaeProvider, norikaeAppUrl } from "../src/providers/norikae.js";
+import { MODE_LABEL, toMarkdown, weekday } from "../src/export/markdown.js";
+import { NorikaeProvider, norikaeAppUrl, stationName } from "../src/providers/norikae.js";
 import { CATEGORY_LABEL, type Suggestion } from "../src/providers/suggest.js";
 import { TripMap, dayColor } from "./map.js";
 import { searchPlaces, type PlaceCandidate } from "./places.js";
@@ -24,6 +24,9 @@ interface SpotItem extends Spot {
 
 interface BasePlace extends Place {
   area?: string;
+  /** 最寄り駅の位置（分かれば、旅程やおすすめの起点にする） */
+  stationLat?: number;
+  stationLng?: number;
 }
 
 interface State {
@@ -103,12 +106,49 @@ function toast(msg: string): void {
 
 const map = new TripMap($("#map"));
 
+/** 旅程・おすすめの起点。最寄り駅の位置が分かっていれば駅から考える */
+function origin(): Place | null {
+  const b = state.base;
+  if (!b) return null;
+  const st = b.station ? stationName(b.station) : "";
+  const atStation = st && b.stationLat !== undefined && b.stationLng !== undefined;
+  return {
+    name: atStation ? `${st}駅` : b.name,
+    station: b.station,
+    lat: atStation ? b.stationLat! : b.lat,
+    lng: atStation ? b.stationLng! : b.lng,
+  };
+}
+
+/** 「茨木（茨木駅）」のような宿の表示名 */
+function baseLabel(p: Place): string {
+  const st = p.station ? stationName(p.station) : "";
+  return st && p.name !== `${st}駅` ? `${p.name}（${st}駅）` : p.name;
+}
+
+/** 最寄り駅の名前から駅の位置を調べる */
+async function locateStation(): Promise<void> {
+  const b = state.base;
+  if (!b?.station) return;
+  const st = stationName(b.station);
+  const hits = await searchPlaces(`${st}駅`);
+  if (state.base !== b || b.station === undefined || stationName(b.station) !== st) return; // 途中で変わった
+  const hit = hits.find((h) => h.name.includes(st)) ?? null;
+  b.stationLat = hit?.lat;
+  b.stationLng = hit?.lng;
+  const note = document.querySelector("#stationNote");
+  if (note) note.textContent = hit ? `${st}駅 を起点にして、おすすめと移動時間を考えます` : `${st}駅 の場所が見つかりませんでした（乗換案内には使います）`;
+  save();
+  suggest.refresh();
+  if (!itinerary) map.showPlaces(origin(), state.spots);
+}
+
 /** おすすめの場所が、もう行きたい場所に入っているか */
 const findSuggested = (s: Suggestion) =>
   state.spots.find((x) => x.sid === s.id || (x.name === s.name && haversineKm(x, s) < 0.5));
 
 const suggest = mountSuggestPanel($("#suggest"), {
-  base: () => state.base,
+  base: () => origin(),
   mode: () => state.mode,
   isAdded: (s) => !!findSuggested(s),
   toggle(s) {
@@ -199,7 +239,8 @@ function renderBase(): void {
         <div class="nm"><b>${esc(b.name)}</b><small>${esc(b.area ?? "")}</small></div>
         <button type="button" class="link" id="changeBase">変更</button>
       </div>
-      <label class="field sub">最寄り駅（乗換案内で使う）<input id="baseStation" value="${esc(b.station ?? "")}" placeholder="例：京都" /></label>`;
+      <label class="field sub">最寄り駅（乗換案内と、おすすめの起点に使う）<input id="baseStation" value="${esc(b.station ?? "")}" placeholder="例：京都" /></label>
+      <p class="note" id="stationNote">${b.station && b.stationLat !== undefined ? `${esc(stationName(b.station))}駅 を起点にして、おすすめと移動時間を考えます` : ""}</p>`;
     $("#changeBase").addEventListener("click", () => {
       state.base = null;
       changed();
@@ -207,9 +248,15 @@ function renderBase(): void {
     });
     $<HTMLInputElement>("#baseStation").addEventListener("change", (e) => {
       const v = (e.target as HTMLInputElement).value.trim();
-      if (state.base) state.base.station = v || undefined;
+      if (!state.base) return;
+      state.base.station = v || undefined;
+      state.base.stationLat = state.base.stationLng = undefined;
+      $("#stationNote").textContent = v ? "駅の場所を調べています…" : "";
       changed();
+      suggest.refresh();
+      if (v) void locateStation();
     });
+    if (b.station && b.stationLat === undefined) void locateStation();
   } else {
     searchBox(box, "ホテル名・駅名など", (c) => {
       state.base = { name: c.name, area: c.area, lat: c.lat, lng: c.lng };
@@ -382,7 +429,7 @@ function changed(): void {
     dirty = true;
     renderStatus();
   } else {
-    map.showPlaces(state.base, state.spots);
+    map.showPlaces(origin(), state.spots);
   }
 }
 
@@ -399,7 +446,8 @@ function buildRequest(): TripRequest | null {
     $("#spotSearch input")?.focus();
     return null;
   }
-  const { area: _area, ...base } = state.base;
+  const base = origin()!;
+  base.name = state.base.name;
   return {
     startDate: state.startDate,
     days: state.days,
@@ -465,7 +513,7 @@ function renderResult(): void {
   $("#export").hidden = !itinerary;
   if (!itinerary) {
     box.innerHTML = "";
-    map.showPlaces(state.base, state.spots);
+    map.showPlaces(origin(), state.spots);
     return;
   }
   map.showItinerary(itinerary);
@@ -502,9 +550,9 @@ function renderDay(day: Itinerary["days"][number], it: Itinerary): string {
   return `<div class="card day" style="--c:${color}">${head}
     ${day.warning ? `<p class="warn">${esc(day.warning)}</p>` : ""}
     <ol class="tl">
-      <li class="t-base"><time>${formatHM(day.start)}</time><div>${esc(it.request.base.name)} を出発</div></li>
+      <li class="t-base"><time>${formatHM(day.start)}</time><div>${esc(baseLabel(it.request.base))} を出発</div></li>
       ${rows}
-      <li class="t-base"><time>${formatHM(day.end)}</time><div>${esc(it.request.base.name)} に到着</div></li>
+      <li class="t-base"><time>${formatHM(day.end)}</time><div>${esc(baseLabel(it.request.base))} に到着</div></li>
     </ol></div>`;
 }
 
@@ -536,22 +584,38 @@ function renderMove(m: Move, date: string): string {
   let body: string;
   if (m.transit) {
     const s = m.transit.summary;
-    const lines = transitLines(m.transit.steps);
-    const steps = m.transit.steps
-      .map((st) =>
-        st.kind === "station"
-          ? `<li class="st"><span class="num">${esc(st.dep || st.arr)}</span>${esc(st.name)}</li>`
-          : `<li class="ac${st.walk ? " walk" : ""}" style="${st.color ? `--lc:${esc(st.color)}` : ""}">${esc([st.line, st.destination, st.platform].filter(Boolean).join(" "))}</li>`,
-      )
-      .join("");
-    body = `<div class="mv-main"><b>${esc(s.dep)}発 → ${esc(s.arr)}着</b>
-        <span>${esc([lines || "徒歩", s.fare != null ? `${s.fare.toLocaleString()}円` : ""].filter(Boolean).join("・"))}</span></div>
-      <details class="route"><summary>経路</summary><ol>${steps}</ol></details>`;
+    const meta = [
+      s.duration,
+      s.transfers != null ? (s.transfers ? `乗換${s.transfers}回` : "乗換なし") : "",
+      s.fare != null ? `${s.fare.toLocaleString()}円` : "",
+    ].filter(Boolean);
+    body = `<div class="mv-main"><b>${esc(s.dep)}発 → ${esc(s.arr)}着</b><span>${esc(meta.join("・"))}</span></div>
+      ${renderRoute(m.transit.steps)}`;
   } else {
     body = `<div class="mv-main"><b>${MODE_LABEL[m.mode]} 約${m.minutes}分</b>
       <span>${m.distanceKm.toFixed(1)}km・概算${m.transitNote ? `（${esc(m.transitNote.replace(/ので概算です$/, ""))}）` : ""}</span></div>`;
   }
   return `<li class="t-move m-${m.mode}"><time>${depart}</time><div class="mv">${body}<div class="links">${links.join("")}</div></div></li>`;
+}
+
+/** 乗る駅・乗り換える駅・降りる駅の時刻と、乗る電車。途中の駅は開くと見られる */
+function renderRoute(steps: NonNullable<Move["transit"]>["steps"]): string {
+  const rows = steps.map((st) => {
+    if (st.kind === "station") {
+      const times = [st.arr && `<span>${esc(st.arr)}着</span>`, st.dep && `<b>${esc(st.dep)}発</b>`].filter(Boolean).join("");
+      return `<li class="rt-st"><span class="rt-t">${times}</span><span class="rt-dot"></span><b class="rt-nm">${esc(st.name)}</b></li>`;
+    }
+    const detail = [st.walk ? "" : st.destination, st.platform, st.walk ? "" : st.stops].filter(Boolean).join("・");
+    const stops = st.stopList?.length
+      ? `<details class="rt-stops"><summary>途中の駅（${st.stopList.length}駅）</summary><ul>${st.stopList
+          .map((x) => `<li><span class="rt-t">${esc(x.time)}</span>${esc(x.name)}</li>`)
+          .join("")}</ul></details>`
+      : "";
+    return `<li class="rt-ac${st.walk ? " walk" : ""}" style="${st.color ? `--lc:${esc(st.color)}` : ""}">
+      <span class="rt-t"></span><span class="rt-bar"></span>
+      <div><span class="rt-ln">${esc(st.line || (st.walk ? "徒歩" : ""))}</span>${detail ? `<small>${esc(detail)}</small>` : ""}${stops}</div></li>`;
+  });
+  return `<ol class="rt">${rows.join("")}</ol>`;
 }
 
 /* ---------- 書き出し ---------- */
@@ -598,5 +662,5 @@ if (itinerary) {
   statusText = "前回つくった旅程です";
   renderResult();
 } else {
-  map.showPlaces(state.base, state.spots);
+  map.showPlaces(origin(), state.spots);
 }
