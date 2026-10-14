@@ -59,7 +59,7 @@ describe("toIcs", () => {
       base: kyotoSt,
       spots: [{ ...kiyomizu, name: "清水寺, 本堂", stayMinutes: 60 }],
     });
-    const ics = toIcs(itinerary, new Date("2026-10-14T00:00:00Z"));
+    const ics = toIcs(itinerary, { now: new Date("2026-10-14T00:00:00Z"), includeMoves: false });
     expect(ics).toContain("\r\n");
     expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(1);
     expect(ics).toContain("SUMMARY:清水寺\\, 本堂");

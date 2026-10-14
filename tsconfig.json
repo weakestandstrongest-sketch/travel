@@ -7,8 +7,23 @@
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node"],
-    "noEmit": true
+    "types": [
+      "node",
+      "vite/client"
+    ],
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ]
   },
-  "include": ["src", "test"]
+  "include": [
+    "src",
+    "test",
+    "web",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
 }

@@ -56,6 +56,8 @@ export interface Visit {
   /** 見学開始（開場待ちがあれば arrive より後） */
   start: number;
   end: number;
+  /** 実際の電車に合わせたら営業時間に間に合わなくなった、など */
+  warning?: string;
 }
 
 export interface Move {
@@ -67,6 +69,38 @@ export interface Move {
   minutes: number;
   distanceKm: number;
   mode: TravelMode;
+  /** 乗換案内で調べた実際の経路（調べていなければなし） */
+  transit?: TransitRoute;
+  /** 調べたが使えなかった理由（概算のまま） */
+  transitNote?: string;
+}
+
+/** のりかえ（/api/search）が返す経路の1区間 */
+export type TransitStep =
+  | { kind: "station"; name: string; arr: string; dep: string }
+  | {
+      kind: "access";
+      line: string;
+      destination: string;
+      color: string;
+      platform: string;
+      stops: string;
+      walk: boolean;
+      stopList?: Array<{ name: string; time: string }>;
+    };
+
+/** のりかえ（/api/search）が返す経路 */
+export interface TransitRoute {
+  summary: {
+    dep: string;
+    arr: string;
+    duration: string;
+    transfers: number | null;
+    fare: number | null;
+    fareNote: string;
+    tags: string[];
+  };
+  steps: TransitStep[];
 }
 
 export interface DayPlan {
@@ -75,6 +109,7 @@ export interface DayPlan {
   items: Array<Visit | Move>;
   start: number;
   end: number;
+  warning?: string;
 }
 
 export interface Unscheduled {

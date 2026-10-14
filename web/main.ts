@@ -1,0 +1,560 @@
+import sample from "../examples/kyoto.json" with { type: "json" };
+import { planTrip } from "../src/core/planner.js";
+import { addDays, formatHM } from "../src/core/time.js";
+import { refineWithTransit } from "../src/core/transit.js";
+import type { Itinerary, Move, Place, Spot, TravelMode, TripRequest, Visit } from "../src/core/types.js";
+import { toIcs } from "../src/export/ics.js";
+import { googleMapsDirectionsUrl, yahooTransitUrl } from "../src/export/links.js";
+import { MODE_LABEL, toMarkdown, transitLines, weekday } from "../src/export/markdown.js";
+import { NorikaeProvider, norikaeAppUrl } from "../src/providers/norikae.js";
+import { TripMap, dayColor } from "./map.js";
+import { searchPlaces, type PlaceCandidate } from "./places.js";
+
+/* ---------- 状態 ---------- */
+
+interface SpotItem extends Spot {
+  id: string;
+  area?: string;
+}
+
+interface BasePlace extends Place {
+  area?: string;
+}
+
+interface State {
+  startDate: string;
+  days: number;
+  dayStart: string;
+  dayEnd: string;
+  mode: TravelMode;
+  base: BasePlace | null;
+  spots: SpotItem[];
+  norikaeUrl: string;
+  useNorikae: boolean;
+}
+
+const STATE_KEY = "travel.state.v1";
+const PLAN_KEY = "travel.itinerary.v1";
+const DEFAULT_NORIKAE = "https://norikae.gohanoishi.workers.dev";
+const STAY_OPTIONS = [15, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360];
+
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+const defaults = (): State => ({
+  startDate: addDays(todayISO(), 7),
+  days: 1,
+  dayStart: "09:00",
+  dayEnd: "19:00",
+  mode: "transit",
+  base: null,
+  spots: [],
+  norikaeUrl: DEFAULT_NORIKAE,
+  useNorikae: true,
+});
+
+function load<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+function store(key: string, value: unknown): void {
+  try {
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* 保存できなくても動作は続ける */
+  }
+}
+
+const state: State = { ...defaults(), ...load<Partial<State>>(STATE_KEY) };
+let itinerary: Itinerary | null = load<Itinerary>(PLAN_KEY);
+let dirty = false;
+let planSeq = 0;
+const openDetails = new Set<string>();
+
+const save = () => store(STATE_KEY, state);
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+/* ---------- DOM ---------- */
+
+const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const md = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}（${weekday(date)}）`;
+
+let toastTimer = 0;
+function toast(msg: string): void {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => el.classList.remove("show"), 2600);
+}
+
+const map = new TripMap($("#map"));
+
+/* ---------- 場所の検索ボックス（宿と行きたい場所で共用） ---------- */
+
+function searchBox(container: HTMLElement, placeholder: string, onPick: (c: PlaceCandidate) => void): void {
+  container.innerHTML = `
+    <form class="search">
+      <input type="search" placeholder="${esc(placeholder)}" enterkeyhint="search" autocomplete="off" />
+      <button class="btn" type="submit">探す</button>
+    </form>
+    <ul class="cands" hidden></ul>`;
+  const form = $<HTMLFormElement>("form", container);
+  const input = $<HTMLInputElement>("input", container);
+  const list = $<HTMLUListElement>(".cands", container);
+  let results: PlaceCandidate[] = [];
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q) return;
+    list.hidden = false;
+    list.innerHTML = `<li class="muted">探しています…</li>`;
+    results = await searchPlaces(q);
+    list.innerHTML = results.length
+      ? results
+          .map((c, i) => `<li><button type="button" data-i="${i}"><b>${esc(c.name)}</b><small>${esc(c.area)}</small></button></li>`)
+          .join("")
+      : `<li class="muted">見つかりませんでした。別の書き方（正式名称・地名をつける）で試してください</li>`;
+  });
+  list.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-i]");
+    const c = b && results[Number(b.dataset.i)];
+    if (!c) return;
+    onPick(c);
+    input.value = "";
+    list.hidden = true;
+    list.innerHTML = "";
+  });
+}
+
+/* ---------- 入力欄 ---------- */
+
+function renderTrip(): void {
+  $<HTMLInputElement>("#startDate").value = state.startDate;
+  $("#days").textContent = `${state.days}日`;
+  $<HTMLInputElement>("#dayStart").value = state.dayStart;
+  $<HTMLInputElement>("#dayEnd").value = state.dayEnd;
+  for (const b of document.querySelectorAll<HTMLButtonElement>("#mode button")) {
+    b.setAttribute("aria-checked", String(b.dataset.mode === state.mode));
+  }
+  $<HTMLInputElement>("#norikaeUrl").value = state.norikaeUrl;
+  $<HTMLInputElement>("#useNorikae").checked = state.useNorikae;
+}
+
+function renderBase(): void {
+  const box = $("#base");
+  if (state.base) {
+    const b = state.base;
+    box.innerHTML = `
+      <div class="base">
+        <div class="nm"><b>${esc(b.name)}</b><small>${esc(b.area ?? "")}</small></div>
+        <button type="button" class="link" id="changeBase">変更</button>
+      </div>
+      <label class="field sub">最寄り駅（乗換案内で使う）<input id="baseStation" value="${esc(b.station ?? "")}" placeholder="例：京都" /></label>`;
+    $("#changeBase").addEventListener("click", () => {
+      state.base = null;
+      changed();
+      renderBase();
+    });
+    $<HTMLInputElement>("#baseStation").addEventListener("change", (e) => {
+      const v = (e.target as HTMLInputElement).value.trim();
+      if (state.base) state.base.station = v || undefined;
+      changed();
+    });
+  } else {
+    searchBox(box, "ホテル名・駅名など", (c) => {
+      state.base = { name: c.name, area: c.area, lat: c.lat, lng: c.lng };
+      changed();
+      renderBase();
+    });
+  }
+}
+
+function renderSpots(): void {
+  const list = $("#spots");
+  $("#spotCount").textContent = state.spots.length ? `${state.spots.length}か所` : "";
+  $("#spotsEmpty").hidden = state.spots.length > 0;
+  const dayOptions = (sel?: number) =>
+    `<option value="">おまかせ</option>` +
+    Array.from({ length: state.days }, (_, i) => `<option value="${i + 1}"${sel === i + 1 ? " selected" : ""}>${i + 1}日目</option>`).join("");
+  const stayOptions = (v: number) =>
+    [...new Set([...STAY_OPTIONS, v])]
+      .sort((a, b) => a - b)
+      .map((m) => `<option value="${m}"${m === v ? " selected" : ""}>${m < 60 ? `${m}分` : `${Math.floor(m / 60)}時間${m % 60 ? `${m % 60}分` : ""}`}</option>`)
+      .join("");
+
+  list.innerHTML = state.spots
+    .map(
+      (s) => `
+    <li class="spot" data-id="${s.id}">
+      <div class="row1">
+        <button type="button" class="star" data-act="star" aria-pressed="${s.priority === "must"}" title="必ず行きたい">★</button>
+        <div class="nm"><b>${esc(s.name)}</b><small>${esc(s.area ?? "")}</small></div>
+        <select data-f="stayMinutes" aria-label="滞在時間">${stayOptions(s.stayMinutes)}</select>
+        <button type="button" class="del" data-act="del" aria-label="削除">×</button>
+      </div>
+      <details${openDetails.has(s.id) ? " open" : ""}>
+        <summary>${detailSummary(s)}</summary>
+        <div class="grid2">
+          <label class="field sub">開く<input type="time" data-f="open" value="${s.open ?? ""}" step="300" /></label>
+          <label class="field sub">閉まる<input type="time" data-f="close" value="${s.close ?? ""}" step="300" /></label>
+          <label class="field sub">行く日<select data-f="day">${dayOptions(s.day)}</select></label>
+          <label class="field sub">最寄り駅<input data-f="station" value="${esc(s.station ?? "")}" placeholder="乗換案内で使う" /></label>
+        </div>
+      </details>
+    </li>`,
+    )
+    .join("");
+}
+
+function detailSummary(s: SpotItem): string {
+  const bits = [
+    s.open || s.close ? `${s.open ?? ""}〜${s.close ?? ""}` : "",
+    s.day ? `${s.day}日目` : "",
+    s.station ? `${s.station}駅` : "",
+  ].filter(Boolean);
+  return bits.length ? esc(bits.join("・")) : "営業時間・行く日・最寄り駅";
+}
+
+function bindInputs(): void {
+  $("#startDate").addEventListener("change", (e) => {
+    const v = (e.target as HTMLInputElement).value;
+    if (v) state.startDate = v;
+    changed();
+  });
+  for (const id of ["dayStart", "dayEnd"] as const) {
+    $(`#${id}`).addEventListener("change", (e) => {
+      const v = (e.target as HTMLInputElement).value;
+      if (v) state[id] = v;
+      changed();
+    });
+  }
+  for (const b of document.querySelectorAll<HTMLButtonElement>(".stepper button")) {
+    b.addEventListener("click", () => {
+      state.days = Math.min(14, Math.max(1, state.days + Number(b.dataset.step)));
+      for (const s of state.spots) if (s.day && s.day > state.days) s.day = undefined;
+      renderTrip();
+      renderSpots();
+      changed();
+    });
+  }
+  $("#mode").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-mode]");
+    if (!b) return;
+    state.mode = b.dataset.mode as TravelMode;
+    renderTrip();
+    changed();
+  });
+  $("#norikaeUrl").addEventListener("change", (e) => {
+    state.norikaeUrl = (e.target as HTMLInputElement).value.trim();
+    save();
+  });
+  $("#useNorikae").addEventListener("change", (e) => {
+    state.useNorikae = (e.target as HTMLInputElement).checked;
+    save();
+  });
+
+  const list = $("#spots");
+  list.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-act]");
+    const li = b?.closest<HTMLElement>(".spot");
+    const spot = li && state.spots.find((s) => s.id === li.dataset.id);
+    if (!b || !spot) return;
+    if (b.dataset.act === "del") {
+      state.spots = state.spots.filter((s) => s !== spot);
+      renderSpots();
+    } else {
+      spot.priority = spot.priority === "must" ? "want" : "must";
+      b.setAttribute("aria-pressed", String(spot.priority === "must"));
+    }
+    changed();
+  });
+  list.addEventListener("change", (e) => {
+    const field = e.target as HTMLInputElement | HTMLSelectElement;
+    const li = field.closest<HTMLElement>(".spot");
+    const spot = li && state.spots.find((s) => s.id === li.dataset.id);
+    const key = field.dataset.f;
+    if (!spot || !key) return;
+    const v = field.value.trim();
+    if (key === "stayMinutes") spot.stayMinutes = Number(v);
+    else if (key === "day") spot.day = v ? Number(v) : undefined;
+    else if (key === "open" || key === "close" || key === "station") spot[key] = v || undefined;
+    const summary = li.querySelector("summary");
+    if (summary) summary.innerHTML = detailSummary(spot);
+    changed();
+  });
+  list.addEventListener("toggle", (e) => {
+    const d = e.target as HTMLDetailsElement;
+    const id = d.closest<HTMLElement>(".spot")?.dataset.id;
+    if (!id) return;
+    if (d.open) openDetails.add(id);
+    else openDetails.delete(id);
+  }, true);
+
+  searchBox($("#spotSearch"), "清水寺、東京タワー など", (c) => {
+    if (state.spots.some((s) => s.name === c.name && Math.abs(s.lat - c.lat) < 1e-4)) {
+      toast(`${c.name} はもう入っています`);
+      return;
+    }
+    state.spots.push({ id: uid(), name: c.name, area: c.area, lat: c.lat, lng: c.lng, stayMinutes: 60, priority: "want" });
+    renderSpots();
+    changed();
+    toast(`${c.name} を追加しました`);
+  });
+
+  $("#loadSample").addEventListener("click", () => {
+    const req = sample as TripRequest;
+    Object.assign(state, {
+      startDate: req.startDate,
+      days: req.days,
+      dayStart: req.dayStart ?? "09:00",
+      dayEnd: req.dayEnd ?? "19:00",
+      mode: req.mode ?? "transit",
+      base: { ...req.base, area: "京都府京都市下京区" },
+      spots: req.spots.map((s) => ({ ...s, id: uid() })),
+    });
+    renderTrip();
+    renderBase();
+    renderSpots();
+    changed();
+  });
+
+  $("#planBtn").addEventListener("click", () => void makePlan());
+  $("#saveIcs").addEventListener("click", () => void saveIcs());
+  $("#copyText").addEventListener("click", () => void copyText());
+}
+
+/** 入力が変わったとき：保存して、地図と「つくり直してね」の表示を更新する */
+function changed(): void {
+  save();
+  if (itinerary) {
+    dirty = true;
+    renderStatus();
+  } else {
+    map.showPlaces(state.base, state.spots);
+  }
+}
+
+/* ---------- 旅程をつくる ---------- */
+
+function buildRequest(): TripRequest | null {
+  if (!state.base) {
+    toast("宿・出発地を決めてください");
+    $("#base input")?.focus();
+    return null;
+  }
+  if (!state.spots.length) {
+    toast("行きたい場所を追加してください");
+    $("#spotSearch input")?.focus();
+    return null;
+  }
+  const { area: _area, ...base } = state.base;
+  return {
+    startDate: state.startDate,
+    days: state.days,
+    dayStart: state.dayStart,
+    dayEnd: state.dayEnd,
+    mode: state.mode,
+    base,
+    spots: state.spots.map(({ id: _i, area: _a, ...s }) => s),
+  };
+}
+
+let statusText = "";
+
+async function makePlan(): Promise<void> {
+  const req = buildRequest();
+  if (!req) return;
+  let plan: Itinerary;
+  try {
+    plan = planTrip(req);
+  } catch (err) {
+    toast(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const seq = ++planSeq;
+  itinerary = plan;
+  dirty = false;
+  statusText = "";
+  renderResult();
+  $(".col-result").scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const transitCount = plan.days.reduce((n, d) => n + d.items.filter((i) => i.kind === "move" && i.mode === "transit").length, 0);
+  if (state.useNorikae && state.norikaeUrl && transitCount > 0) {
+    statusText = `のりかえで電車を調べています… 0/${transitCount}`;
+    renderStatus();
+    const refined = await refineWithTransit(plan, new NorikaeProvider(state.norikaeUrl), {
+      onProgress: (done, total) => {
+        if (seq !== planSeq) return;
+        statusText = `のりかえで電車を調べています… ${done}/${total}`;
+        renderStatus();
+      },
+    });
+    if (seq !== planSeq) return; // 途中でつくり直した
+    const moves = refined.days.flatMap((d) => d.items).filter((i): i is Move => i.kind === "move" && i.mode === "transit");
+    const found = moves.filter((m) => m.transit).length;
+    statusText =
+      found === moves.length
+        ? "のりかえで調べた実際の電車に合わせました"
+        : found === 0
+          ? "のりかえで電車を調べられなかったので、移動時間は概算です（設定の URL を確認してください）"
+          : `${moves.length}区間のうち${found}区間を実際の電車に合わせました（残りは概算）`;
+    itinerary = refined;
+    renderResult();
+  } else {
+    statusText = "移動時間は直線距離からの概算です";
+    renderStatus();
+  }
+}
+
+function renderResult(): void {
+  store(PLAN_KEY, itinerary);
+  renderStatus();
+  const box = $("#itinerary");
+  $("#export").hidden = !itinerary;
+  if (!itinerary) {
+    box.innerHTML = "";
+    map.showPlaces(state.base, state.spots);
+    return;
+  }
+  map.showItinerary(itinerary);
+  const it = itinerary;
+  box.innerHTML =
+    it.days.map((d) => renderDay(d, it)).join("") +
+    (it.unscheduled.length
+      ? `<div class="card unscheduled"><h3>入らなかった場所</h3><ul>${it.unscheduled
+          .map((u) => `<li><b>${esc(u.spot.name)}</b><small>${esc(u.reason)}</small></li>`)
+          .join("")}</ul></div>`
+      : "");
+}
+
+function renderStatus(): void {
+  const el = $("#status");
+  const msgs: string[] = [];
+  if (dirty) msgs.push(`<span>条件が変わりました。</span><button type="button" class="link" data-replan>つくり直す</button>`);
+  else if (statusText) msgs.push(`<span>${esc(statusText)}</span>`);
+  el.hidden = msgs.length === 0;
+  el.innerHTML = msgs.join("");
+  el.querySelector("[data-replan]")?.addEventListener("click", () => void makePlan());
+}
+
+function renderDay(day: Itinerary["days"][number], it: Itinerary): string {
+  const color = dayColor(day.day);
+  const visits = day.items.filter((i) => i.kind === "visit").length;
+  const head = `<h3><span class="dot"></span>${day.day}日目 <small>${md(day.date)}</small>
+    <span class="end">${visits ? `宿に ${formatHM(day.end)} ごろ帰着` : ""}</span></h3>`;
+  if (!visits) return `<div class="card day" style="--c:${color}">${head}<p class="muted">予定なし（自由行動）</p></div>`;
+  let n = 0;
+  const rows = day.items
+    .map((item) => (item.kind === "visit" ? renderVisit(item, ++n) : renderMove(item, day.date)))
+    .join("");
+  return `<div class="card day" style="--c:${color}">${head}
+    ${day.warning ? `<p class="warn">${esc(day.warning)}</p>` : ""}
+    <ol class="tl">
+      <li class="t-base"><time>${formatHM(day.start)}</time><div>${esc(it.request.base.name)} を出発</div></li>
+      ${rows}
+      <li class="t-base"><time>${formatHM(day.end)}</time><div>${esc(it.request.base.name)} に到着</div></li>
+    </ol></div>`;
+}
+
+function renderVisit(v: Visit, n: number): string {
+  const wait = v.start - v.arrive;
+  const notes = [
+    `${v.spot.stayMinutes}分`,
+    v.spot.priority === "must" ? "★" : "",
+    wait > 0 ? `${formatHM(v.arrive)}着・開場待ち${wait}分` : "",
+    v.spot.close ? `${v.spot.close}まで` : "",
+  ].filter(Boolean);
+  return `<li class="t-visit"><time>${formatHM(v.start)}<br /><span>${formatHM(v.end)}</span></time>
+    <div class="vcard"><span class="num">${n}</span><div><b>${esc(v.spot.name)}</b><small>${esc(notes.join("・"))}</small>
+    ${v.warning ? `<p class="warn">${esc(v.warning)}</p>` : ""}</div></div></li>`;
+}
+
+function renderMove(m: Move, date: string): string {
+  const depart = formatHM(m.depart);
+  const links: string[] = [];
+  if (m.mode === "transit") {
+    links.push(
+      state.norikaeUrl
+        ? `<a href="${esc(norikaeAppUrl(state.norikaeUrl, m.from, m.to, date, depart))}" target="_blank" rel="noopener">のりかえ</a>`
+        : `<a href="${esc(yahooTransitUrl(m.from, m.to, date, m.depart))}" target="_blank" rel="noopener">乗換案内</a>`,
+    );
+  }
+  links.push(`<a href="${esc(googleMapsDirectionsUrl(m.from, m.to, m.mode))}" target="_blank" rel="noopener">地図</a>`);
+
+  let body: string;
+  if (m.transit) {
+    const s = m.transit.summary;
+    const lines = transitLines(m.transit.steps);
+    const steps = m.transit.steps
+      .map((st) =>
+        st.kind === "station"
+          ? `<li class="st"><span class="num">${esc(st.dep || st.arr)}</span>${esc(st.name)}</li>`
+          : `<li class="ac${st.walk ? " walk" : ""}" style="${st.color ? `--lc:${esc(st.color)}` : ""}">${esc([st.line, st.destination, st.platform].filter(Boolean).join(" "))}</li>`,
+      )
+      .join("");
+    body = `<div class="mv-main"><b>${esc(s.dep)}発 → ${esc(s.arr)}着</b>
+        <span>${esc([lines || "徒歩", s.fare != null ? `${s.fare.toLocaleString()}円` : ""].filter(Boolean).join("・"))}</span></div>
+      <details class="route"><summary>経路</summary><ol>${steps}</ol></details>`;
+  } else {
+    body = `<div class="mv-main"><b>${MODE_LABEL[m.mode]} 約${m.minutes}分</b>
+      <span>${m.distanceKm.toFixed(1)}km・概算${m.transitNote ? `（${esc(m.transitNote.replace(/ので概算です$/, ""))}）` : ""}</span></div>`;
+  }
+  return `<li class="t-move m-${m.mode}"><time>${depart}</time><div class="mv">${body}<div class="links">${links.join("")}</div></div></li>`;
+}
+
+/* ---------- 書き出し ---------- */
+
+async function saveIcs(): Promise<void> {
+  if (!itinerary) return;
+  const ics = toIcs(itinerary, { norikaeUrl: state.norikaeUrl || undefined });
+  const name = `travel-${itinerary.request.startDate}.ics`;
+  const file = new File([ics], name, { type: "text/calendar" });
+  // iPhone では共有シートの「"ファイル"に保存」から、ひび手帳で読み込める
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: name });
+      return;
+    } catch (err) {
+      if ((err as DOMException).name === "AbortError") return;
+    }
+  }
+  const url = URL.createObjectURL(file);
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+async function copyText(): Promise<void> {
+  if (!itinerary) return;
+  try {
+    await navigator.clipboard.writeText(toMarkdown(itinerary, { norikaeUrl: state.norikaeUrl || undefined }));
+    toast("旅程をコピーしました");
+  } catch {
+    toast("コピーできませんでした");
+  }
+}
+
+/* ---------- 起動 ---------- */
+
+renderTrip();
+renderBase();
+renderSpots();
+bindInputs();
+if (itinerary) {
+  statusText = "前回つくった旅程です";
+  renderResult();
+} else {
+  map.showPlaces(state.base, state.spots);
+}
