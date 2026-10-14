@@ -1,0 +1,4 @@
+node_modules/
+dist/
+*.ics
+!examples/*.ics

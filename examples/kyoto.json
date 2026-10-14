@@ -1,0 +1,17 @@
+{
+  "startDate": "2026-11-21",
+  "days": 2,
+  "dayStart": "09:00",
+  "dayEnd": "19:00",
+  "mode": "transit",
+  "base": { "name": "京都駅", "station": "京都", "lat": 34.9858, "lng": 135.7588 },
+  "spots": [
+    { "name": "伏見稲荷大社", "station": "稲荷", "lat": 34.9671, "lng": 135.7727, "stayMinutes": 90, "priority": "must" },
+    { "name": "清水寺", "station": "清水五条", "lat": 34.9949, "lng": 135.785, "stayMinutes": 90, "open": "06:00", "close": "18:00", "priority": "must" },
+    { "name": "金閣寺", "station": "北大路", "lat": 35.0394, "lng": 135.7292, "stayMinutes": 60, "open": "09:00", "close": "17:00" },
+    { "name": "銀閣寺", "station": "出町柳", "lat": 35.027, "lng": 135.7982, "stayMinutes": 60, "open": "09:00", "close": "16:30" },
+    { "name": "嵐山 竹林の小径", "station": "嵯峨嵐山", "lat": 35.017, "lng": 135.6713, "stayMinutes": 90 },
+    { "name": "二条城", "station": "二条城前", "lat": 35.0142, "lng": 135.7481, "stayMinutes": 90, "open": "08:45", "close": "17:00" },
+    { "name": "錦市場", "station": "四条", "lat": 35.005, "lng": 135.7649, "stayMinutes": 60, "open": "10:00", "close": "17:00" }
+  ]
+}
