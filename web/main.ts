@@ -1,4 +1,5 @@
 import sample from "../examples/kyoto.json" with { type: "json" };
+import { haversineKm } from "../src/core/geo.js";
 import { planTrip } from "../src/core/planner.js";
 import { addDays, formatHM } from "../src/core/time.js";
 import { refineWithTransit } from "../src/core/transit.js";
@@ -7,14 +8,18 @@ import { toIcs } from "../src/export/ics.js";
 import { googleMapsDirectionsUrl, yahooTransitUrl } from "../src/export/links.js";
 import { MODE_LABEL, toMarkdown, transitLines, weekday } from "../src/export/markdown.js";
 import { NorikaeProvider, norikaeAppUrl } from "../src/providers/norikae.js";
+import { CATEGORY_LABEL, type Suggestion } from "../src/providers/suggest.js";
 import { TripMap, dayColor } from "./map.js";
 import { searchPlaces, type PlaceCandidate } from "./places.js";
+import { mountSuggestPanel } from "./suggest-panel.js";
 
 /* ---------- 状態 ---------- */
 
 interface SpotItem extends Spot {
   id: string;
   area?: string;
+  /** おすすめから追加したときの OSM の ID */
+  sid?: string;
 }
 
 interface BasePlace extends Place {
@@ -98,6 +103,40 @@ function toast(msg: string): void {
 
 const map = new TripMap($("#map"));
 
+/** おすすめの場所が、もう行きたい場所に入っているか */
+const findSuggested = (s: Suggestion) =>
+  state.spots.find((x) => x.sid === s.id || (x.name === s.name && haversineKm(x, s) < 0.5));
+
+const suggest = mountSuggestPanel($("#suggest"), {
+  base: () => state.base,
+  mode: () => state.mode,
+  isAdded: (s) => !!findSuggested(s),
+  toggle(s) {
+    const found = findSuggested(s);
+    if (found) {
+      state.spots = state.spots.filter((x) => x !== found);
+      toast(`${s.name} を外しました`);
+    } else {
+      state.spots.push({
+        id: uid(),
+        sid: s.id,
+        name: s.name,
+        area: CATEGORY_LABEL[s.category],
+        lat: s.lat,
+        lng: s.lng,
+        stayMinutes: s.stayMinutes,
+        open: s.open,
+        close: s.close,
+        priority: "want",
+      });
+      toast(`${s.name} を追加しました`);
+    }
+    renderSpots();
+    changed();
+    return !found;
+  },
+});
+
 /* ---------- 場所の検索ボックス（宿と行きたい場所で共用） ---------- */
 
 function searchBox(container: HTMLElement, placeholder: string, onPick: (c: PlaceCandidate) => void): void {
@@ -151,6 +190,7 @@ function renderTrip(): void {
 }
 
 function renderBase(): void {
+  suggest.refresh();
   const box = $("#base");
   if (state.base) {
     const b = state.base;
@@ -252,6 +292,7 @@ function bindInputs(): void {
     if (!b) return;
     state.mode = b.dataset.mode as TravelMode;
     renderTrip();
+    suggest.refresh();
     changed();
   });
   $("#norikaeUrl").addEventListener("change", (e) => {
@@ -272,6 +313,7 @@ function bindInputs(): void {
     if (b.dataset.act === "del") {
       state.spots = state.spots.filter((s) => s !== spot);
       renderSpots();
+      suggest.refresh();
     } else {
       spot.priority = spot.priority === "must" ? "want" : "must";
       b.setAttribute("aria-pressed", String(spot.priority === "must"));

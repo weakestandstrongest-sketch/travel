@@ -667,3 +667,145 @@ summary:focus-visible {
 .leaflet-container {
   font-family: var(--f-body);
 }
+
+/* ---------- 宿のまわりのおすすめ ---------- */
+#suggest {
+  margin-top: 10px;
+}
+.suggest-open {
+  width: 100%;
+  white-space: normal;
+}
+.suggest {
+  background: var(--surface-2);
+  border-radius: 12px;
+  padding: 12px;
+}
+.sg-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.sg-range button {
+  display: grid;
+  line-height: 1.25;
+  padding: 4px 0;
+}
+.sg-range small {
+  font-size: 10px;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.chip {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+.sg-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.sg {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 8px;
+  border: 1px solid transparent;
+}
+.sg.added {
+  border-color: var(--accent);
+}
+.sg img,
+.sg-ph {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+}
+.sg-ph::after {
+  content: "📍";
+}
+.sg-ph.cat-temple::after {
+  content: "⛩️";
+}
+.sg-ph.cat-history::after {
+  content: "🏯";
+}
+.sg-ph.cat-museum::after {
+  content: "🏛️";
+}
+.sg-ph.cat-nature::after {
+  content: "🌿";
+}
+.sg-ph.cat-fun::after {
+  content: "🎡";
+}
+.sg-body {
+  min-width: 0;
+}
+.sg-body b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sg-body small {
+  color: var(--ink-2);
+  display: block;
+}
+.sg-body p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sg-add {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sg-add[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.more {
+  width: 100%;
+  margin-top: 8px;
+}
